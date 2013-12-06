@@ -1,0 +1,4 @@
+/Makefile*
+*.o
+/pureble.pro.user
+*.a
