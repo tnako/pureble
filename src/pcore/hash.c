@@ -101,16 +101,19 @@ static phash_object pcore_hash_newObject(const puint32 value, void* const data)
     return object;
 }
 
-static void pcore_hash_deleteObject(phash_object *object)
+static bool pcore_hash_deleteObject(phash_object *object)
 {
     if (!object || !(*object)) {
         plog_error("%s(): Нет phash_object!", __PRETTY_FUNCTION__);
-        return;
+        return false;
     }
 
     plog_dbg("%s(): Очистка ресурсов 0x%08X со значением '%d'", __PRETTY_FUNCTION__, *object, (*object)->value);
 
-    pfree_check(__PRETTY_FUNCTION__, (void**)object);
+    void *adr = *object;
+    pfree(&adr);
+
+    return true;
 }
 
 
@@ -160,7 +163,7 @@ void* pcore_hash_search(phash_pool pool, const puint32 value)
         break;
     }
 
-    return ret;
+    return ret->data;
 }
 
 
@@ -177,7 +180,11 @@ void pcore_hash_done(phash_pool *ptr)
 
     tommy_node* i = tommy_list_head(pool->list);
     while (i) {
-        pcore_hash_deleteObject((phash_object*)&i->data);
+        tommy_node* i_next = i->next;
+        if (!pcore_hash_deleteObject((phash_object*)&i->data)) {
+            break;
+        }
+        i = i_next;
     }
 
     switch (pool->type) {
@@ -230,7 +237,7 @@ puint32 pcore_hash_size(phash_pool pool)
 
     puint32 ret = 0;
 
-    plog_dbg("%s(): Количество элементов пула 0x%08X", __PRETTY_FUNCTION__, pool);
+    plog_dbg("%s(): Подсчёт количества элементов у пула 0x%08X", __PRETTY_FUNCTION__, pool);
 
     switch (pool->type) {
     case PHASH_FAST_SEARCH:

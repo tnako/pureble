@@ -7,6 +7,7 @@ INCLUDEPATH += ./include
 DESTDIR = ./bin
 
 CONFIG += debug_and_release build_all staticlib
+# CONFIG += staticlib
 
 CONFIG(release, debug|release) {
 OBJECTS_DIR = ./obj/release

@@ -1,4 +1,7 @@
-/Makefile*
+*Makefile*
 *.o
-/pureble.pro.user
+*.pro.user
 *.a
+/test/args/args
+/test/args/argsd
+*callgrind.out.*

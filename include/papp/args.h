@@ -16,9 +16,9 @@ enum {
 void papp_args_destroy();
 
 // Добавление нового элемента для парсинга аргументов
-bool papp_args_add(const char* long_name,
+bool papp_args_add(char *long_name,
                    const char short_name,
-                   const puint8 has_arg,
+                   const int has_arg,
                    void (*ret_func)(const char*));
 
 // Обработка списка аргументов

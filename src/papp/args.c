@@ -13,7 +13,7 @@
 
 typedef struct {
     char *long_name;
-    char short_name;
+    int short_name;
     int has_arg;
     void (*ret_func)(const char*);
 } one_arg;
@@ -21,26 +21,42 @@ typedef struct {
 phash_pool args_pool = NULL;
 
 puint16 short_names_size = 0;
-struct option *long_names = NULL;
+struct option *long_names_array = NULL;
 char *short_names = NULL;
+puint32 short_options_position;
+puint32 long_options_position;
 
 
 static void papp_args_fill(const puint32 value, void* const data)
 {
-    if (!data || !short_names || !long_names || !value) {
+    if (!data || !short_names || !long_names_array || !value) {
         plog_warn("Невозможно подготовить getopt()");
         return;
     }
 
-    //strncat(short_names, data->short_name, 1);
+    if (short_options_position == short_names_size) {
+        plog_warn("Список коротких аргументов меньше размера. WTF!");
+        return;
+    }
 
+    const one_arg *parameter = data;
+
+    short_names[short_options_position++] = parameter->short_name;
+
+    if (parameter->has_arg) {
+        short_names[short_options_position++] = ':';
+    }
+
+    struct option *long_options = long_names_array + long_options_position++;
+    long_options->name = parameter->long_name;
+    long_options->has_arg = parameter->has_arg;
+    long_options->val = parameter->short_name;
 }
-
 
 bool papp_args_check(const int argc, char* const argv[], void (*default_func)(const char*))
 {
     if (argc <= 1 || !argv) {
-        plog_error("Нету допольнительных аргументов");
+        plog_warn("Нету дополнительных аргументов");
         return false;
     }
 
@@ -51,24 +67,46 @@ bool papp_args_check(const int argc, char* const argv[], void (*default_func)(co
         return false;
     }
 
-    long_names = pmalloc(sizeof(struct option) * (hash_size + 1));
-    short_names = pmalloc(short_names_size);
+    long_names_array = pmalloc(sizeof(struct option) * (hash_size + 1));
+    short_names = pmalloc(short_names_size + 1);
 
-    //pint32 option_index = 0;
-
+    short_options_position = 0;
+    long_options_position = 0;
     pcore_hash_foreach(args_pool, papp_args_fill);
+    short_names[short_options_position] = 0;
 
-    default_func("test");
+    plog_dbg("getopt_long(): '%s'", short_names);
+    while (1) {
+        int option_index = 0;
+        int opt_res = getopt_long(argc, argv, short_names, long_names_array, &option_index);
+
+        if (opt_res == -1) {
+            break;
+        } else if (opt_res == '?') {
+            /* getopt_long already printed an error message. */
+            continue;
+        }
+
+        const one_arg *parameter = pcore_hash_search(args_pool, opt_res);
+
+        if (parameter == NULL) {
+            char tmp[2] = { 0 };
+            tmp[0] = opt_res;
+            default_func(tmp);
+        } else {
+            parameter->ret_func(optarg);
+        }
+    }
 
     pfree((void **)&short_names);
-    pfree((void **)&long_names);
+    pfree((void **)&long_names_array);
 
     return true;
 }
 
-bool papp_args_add(const char* long_name,
+bool papp_args_add(char *long_name,
                    const char short_name,
-                   const puint8 has_arg,
+                   const int has_arg,
                    void (*ret_func)(const char*))
 {
     if (!long_name) {
@@ -97,7 +135,13 @@ bool papp_args_add(const char* long_name,
         args_pool = pcore_hash_init(PHASH_FAST_INSERT);
     }
 
-    pcore_hash_insert(args_pool, short_name, ret_func);
+    one_arg *parameter = pmalloc(sizeof(one_arg));
+    parameter->has_arg = has_arg;
+    parameter->long_name = long_name;
+    parameter->ret_func = ret_func;
+    parameter->short_name = short_name;
+
+    pcore_hash_insert(args_pool, short_name, parameter);
 
     if (has_arg == PARGS_NO_ARGUMENT) {
         ++short_names_size;
@@ -107,17 +151,16 @@ bool papp_args_add(const char* long_name,
 
     return true;
 }
-/*
-static void free_args_object(phash_object obj)
+
+static void papp_args_free(const puint32 UNUSED(value), void *data)
 {
-    if (!obj) {
-        plog_warn("Нету phash_object");
+    if (!data) {
+        plog_warn("Нету объекта удаления");
         return;
     }
 
-    pcore_hash_deleteObject(&obj);
+    pfree(&data);
 }
-*/
 
 void papp_args_destroy()
 {
@@ -126,6 +169,7 @@ void papp_args_destroy()
         return;
     }
 
-    //pcore_hash_foreach(args_pool, free_args_object);
+    pcore_hash_foreach(args_pool, papp_args_free);
     pcore_hash_done(&args_pool);
+    args_pool = NULL;
 }
