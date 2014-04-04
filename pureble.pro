@@ -5,17 +5,25 @@ VPATH += ./include
 
 INCLUDEPATH += ./include
 DESTDIR = ./bin
+OUT_PWD = ./bin
 
-CONFIG += debug_and_release build_all staticlib
-# CONFIG += staticlib
+CONFIG += staticlib
 
 CONFIG(release, debug|release) {
-OBJECTS_DIR = ./obj/release
+    OBJECTS_DIR = ./build/release
+    MOC_DIR = ./build/release
+    RCC_DIR = ./build/release
+    UI_DIR = ./build/release
+    INCLUDEPATH += ./build/release
 }
 
 CONFIG(debug, debug|release) {
-TARGET = $$join(TARGET,,,d)
-OBJECTS_DIR = ./obj/debug
+    TARGET = $$join(TARGET,,,d)
+    OBJECTS_DIR = ./build/debug
+    MOC_DIR = ./build/debug
+    RCC_DIR = ./build/debug
+    UI_DIR = ./build/debug
+    INCLUDEPATH += ./build/debug
 }
 
 QMAKE_LINK = gcc

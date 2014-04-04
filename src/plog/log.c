@@ -1,6 +1,7 @@
 #ifdef MODULE_NAME
 #undef MODULE_NAME
 #endif
+
 #define MODULE_NAME "pcore/logging"
 
 #include <stdarg.h>
@@ -8,8 +9,6 @@
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
-
-//#include "main.h"
 
 
 #define DATETIME_FORMAT "%Y-%m-%d %H:%M:%S"

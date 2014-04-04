@@ -1,6 +1,7 @@
 #ifdef MODULE_NAME
 #undef MODULE_NAME
 #endif
+
 #define MODULE_NAME "pcore/hash"
 
 #include "tommy.h"
@@ -197,10 +198,10 @@ void pcore_hash_done(phash_pool *ptr)
         break;
     }
 
-    pfree((void **)&pool->hash_struct);
-    pfree((void **)&pool->list);
+    pfree(&pool->hash_struct);
+    pfree(&pool->list);
 
-    pfree((void **)&pool);
+    pfree(&pool);
 }
 
 
