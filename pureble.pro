@@ -44,7 +44,9 @@ SOURCES += \
     src/papp/args.c \
     src/papp/help.c \
     src/pcore/hash.c \
-    third_party/tommyds/tommy.c
+    third_party/tommyds/tommy.c \
+    src/papp/runner.c \
+    src/pobj/object.c
 
 HEADERS += \
     include/plog/log.h \
@@ -54,5 +56,7 @@ HEADERS += \
     third_party/tommyds/tommy.h \
     include/pcore/types.h \
     include/pureble.h \
-    include/pcore/internal.h
+    include/pcore/internal.h \
+    include/papp/runner.h \
+    include/pobj/object.h
 

@@ -37,7 +37,7 @@ static inline void* pmalloc_check(const char *func, size_t __size)
         return NULL;
     }
 
-    memset(adr, 0x0, __size);
+    memset(adr, 0x0, (__size)+MEM_GUARD);
 
     return adr;
 }
