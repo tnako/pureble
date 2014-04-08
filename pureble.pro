@@ -46,7 +46,8 @@ SOURCES += \
     src/pcore/hash.c \
     third_party/tommyds/tommy.c \
     src/papp/runner.c \
-    src/pobj/object.c
+    src/pobj/object.c \
+    src/pobj/timer.c
 
 HEADERS += \
     include/plog/log.h \
@@ -58,5 +59,6 @@ HEADERS += \
     include/pureble.h \
     include/pcore/internal.h \
     include/papp/runner.h \
-    include/pobj/object.h
+    include/pobj/object.h \
+    include/pobj/timer.h
 
