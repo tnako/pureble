@@ -11,10 +11,11 @@
 
 #include <sys/signalfd.h>
 #include <errno.h>
+#include <unistd.h>
 
 
 
-bool pobj_signals_add(pobj_loop *loop, pint8 signal, void (*callback)())
+bool pobj_signals_add(pobj_loop *loop, puint8 signal, void (*callback)())
 {
     if (unlikely(!loop)) {
         plog_error("pobj_signals_add() нет объекта");
@@ -26,10 +27,11 @@ bool pobj_signals_add(pobj_loop *loop, pint8 signal, void (*callback)())
         return false;
     }
 
-    loop->signals_callback[signal] = (void *)callback;
+    loop->signals_callback[signal] = callback;
+    return true;
 }
 
-bool pobj_signals_del(pobj_loop* loop, pint8 signal)
+bool pobj_signals_del(pobj_loop* loop, puint8 signal)
 {
     if (unlikely(!loop)) {
         plog_error("pobj_signals_del() нет объекта");
@@ -37,11 +39,28 @@ bool pobj_signals_del(pobj_loop* loop, pint8 signal)
     }
 
     loop->signals_callback[signal] = NULL;
+    return true;
 }
 
 static void pobj_signals_internal_update(pobj_loop* loop, const puint32 epoll_events)
 {
+    if (epoll_events & POBJIN) {
+        for (;;) {
+            struct signalfd_siginfo fdsi;
+            pint32 s = read(loop->signals_fd, &fdsi, sizeof(struct signalfd_siginfo));
+            if (s < (pint32)sizeof(struct signalfd_siginfo)) {
+                return;
+            }
 
+            if (loop->signals_callback[fdsi.ssi_signo]) {
+                (*loop->signals_callback[fdsi.ssi_signo])();
+            } else {
+                plog_error("pobj_signals_internal_update() прочитан неожиданный signal");
+            }
+        }
+    } else {
+        return;
+    }
 }
 
 bool pobj_signals_start(pobj_loop* loop)
@@ -49,6 +68,10 @@ bool pobj_signals_start(pobj_loop* loop)
     if (unlikely(!loop)) {
         plog_error("pobj_signals_start() нет объекта");
         return false;
+    }
+
+    if (unlikely(loop->signals_fd)) {
+        pobj_signals_stop(loop);
     }
 
     sigset_t sigmask;
@@ -73,7 +96,7 @@ bool pobj_signals_start(pobj_loop* loop)
     }
 
     int signal_fd;
-    if (unlikely((signal_fd = signalfd(-1, &sigmask, 0)) < 0)) {
+    if (unlikely((signal_fd = signalfd(-1, &sigmask, SFD_NONBLOCK)) < 0)) {
         plog_error("Неудалось настроить POSIX сигнал: '%s'", strerror(errno));
         return false;
     }
@@ -87,4 +110,20 @@ bool pobj_signals_start(pobj_loop* loop)
     loop->signals_fd = signal_fd;
 
     return true;
+}
+
+void pobj_signals_stop(pobj_loop *loop)
+{
+    if (unlikely(!loop)) {
+        plog_error("pobj_signals_stop() нет объекта");
+        return;
+    }
+
+    if (!loop->signals_fd) {
+        return;
+    }
+
+    pobj_unregister_event(loop, loop->signals_fd);
+    close(loop->signals_fd);
+    loop->signals_fd = 0;
 }

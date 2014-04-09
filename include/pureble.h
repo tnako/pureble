@@ -12,6 +12,7 @@
 #include "plog/log.h"
 #include "pobj/object.h"
 #include "pobj/timer.h"
+#include "pobj/signals.h"
 
 
 #endif
