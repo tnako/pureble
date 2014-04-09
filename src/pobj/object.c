@@ -12,6 +12,14 @@
 #include <unistd.h>
 
 
+typedef struct {
+    pint32 eventfd;
+    pint32 type;
+} pobj_events;
+
+pobj_events *pobj_internal_events;
+puint32 pobj_internal_events_last_event;
+
 
 pobj_loop *pobj_create(puint32 max_epoll_events, bool threaded)
 {
@@ -20,16 +28,19 @@ pobj_loop *pobj_create(puint32 max_epoll_events, bool threaded)
     }
 
     puint32 s = 4;
-    while(s < max_epoll_events) {
-        s <<= 1; // x 2
+    while(likely(s < max_epoll_events)) {
+        s <<= 1; // x2
     }
     max_epoll_events = s;
 
     pobj_loop *loop = pmalloc(sizeof(pobj_loop)+sizeof(struct epoll_event)*max_epoll_events);
+    pobj_internal_events = pmalloc(sizeof(pobj_events)*max_epoll_events);
+    pobj_internal_events_last_event = 0;
 
     loop->epoll_events=(struct epoll_event*)((char*)(loop+1));
     loop->max_epoll_events = max_epoll_events;
     loop->epoll_fd = epoll_create(1); // size ignored
+    loop->threaded = threaded;
 
     return loop;
 }
@@ -96,6 +107,9 @@ bool pobj_register_event(pobj_loop *loop, const pobj_event_emit callback, const 
     } else {
         plog_dbg("Цикл %x | Событие %d зарегистрировано на функцию %x с типом %d", loop, eventfd, callback, type);
     }
+
+    pobj_internal_events[pobj_internal_events_last_event++].eventfd = eventfd;
+    pobj_internal_events[pobj_internal_events_last_event++].type = type;
 
     loop->ref_count++;
     return true;
@@ -199,4 +213,6 @@ void pobj_destroy(pobj_loop **loop)
 
     close((*loop)->epoll_fd);
     pfree(loop);
+
+    pfree(&pobj_internal_events);
 }

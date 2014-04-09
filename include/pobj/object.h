@@ -5,6 +5,7 @@
 #include "pobj/timer.h"
 
 #include <sys/epoll.h>
+#include <signal.h>
 
 #define POBJIN EPOLLIN
 #define POBJOUT EPOLLOUT
@@ -17,12 +18,15 @@ typedef struct {
 
 typedef struct {
     bool broken;
+    bool threaded;
     int epoll_fd;
     pint32 num_epoll_events;
     puint32 ref_count;
     puint32 max_epoll_events;
     struct epoll_event* epoll_events;
     pobj_internal_timer internal_timer;
+    void (*signals_callback[_NSIG])();
+    int signals_fd;
 
     // ToDo: список подписчиков
 

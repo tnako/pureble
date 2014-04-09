@@ -47,7 +47,8 @@ SOURCES += \
     third_party/tommyds/tommy.c \
     src/papp/runner.c \
     src/pobj/object.c \
-    src/pobj/timer.c
+    src/pobj/timer.c \
+    src/pobj/signals.c
 
 HEADERS += \
     include/plog/log.h \
@@ -60,5 +61,6 @@ HEADERS += \
     include/pcore/internal.h \
     include/papp/runner.h \
     include/pobj/object.h \
-    include/pobj/timer.h
+    include/pobj/timer.h \
+    include/pobj/signals.h
 
