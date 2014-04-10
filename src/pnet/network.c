@@ -126,8 +126,9 @@ pint32 pnet_recv(pnet_socket *socket, char **buffer)
         return -1;
     }
 
-    //int bytes = nn_recv(socket->socket_fd, buffer, NN_MSG, 0);
-
+    int bytes = nn_recv(socket->socket_fd, buffer, NN_MSG, NN_DONTWAIT);
+    //int bytes = nn_recvmsg(socket->socket_fd, (struct nn_msghdr *)buffer, NN_DONTWAIT);
+    /*
     struct nn_msghdr hdr;
     struct nn_iovec iov [2];
     char buf0 [10] = { 0 };
@@ -139,14 +140,15 @@ pint32 pnet_recv(pnet_socket *socket, char **buffer)
     memset (&hdr, 0, sizeof (hdr));
     hdr.msg_iov = iov;
     hdr.msg_iovlen = 2;
-    int bytes = nn_recvmsg(socket->socket_fd, &hdr, 0);
+    int bytes = nn_recvmsg(socket->socket_fd, &hdr, NN_DONTWAIT);
 
     printf("%d | %s | %s\n", bytes, buf0, buf1);
     *buffer = strdup(buf0);
-
+*/
     return bytes;
 }
 
+puint32 rra = 1684*623*452;
 
 pint32 pnet_send(pnet_socket *socket, char *buffer)
 {
@@ -160,7 +162,26 @@ pint32 pnet_send(pnet_socket *socket, char *buffer)
         return -1;
     }
 
-    int bytes = nn_send(socket->socket_fd, buffer, strlen(buffer), 0);
+    //int bytes = nn_send(socket->socket_fd, buffer, strlen(buffer), NN_DONTWAIT);
+    struct nn_msghdr hdr;
+    struct nn_iovec iov [2];
+    puint32 buf0 = ++rra | 0x80000000;
+
+    char buf1 [10] = { 0 };
+    strcpy(buf1, buffer);
+    iov [0].iov_base = &buf0;
+    iov [0].iov_len = 4;
+    iov [1].iov_base = buf1;
+    iov [1].iov_len = sizeof (buf1);
+    memset (&hdr, 0, sizeof (hdr));
+    hdr.msg_iov = iov;
+    hdr.msg_iovlen = 2;
+    int bytes = nn_sendmsg (socket->socket_fd, &hdr, NN_DONTWAIT);
+
+
+    plog_dbg("pnet_send() send %d", bytes);
+    //int rc = nn_freemsg(buffer);
+     // plog_dbg("rc == %d", rc);
 
     return bytes;
 }
