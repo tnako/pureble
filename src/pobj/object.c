@@ -108,7 +108,7 @@ bool pobj_register_event(pobj_loop *loop, const pobj_event_emit callback, const 
         plog_dbg("Цикл %x | Событие %d зарегистрировано на функцию %x с типом %d", loop, eventfd, callback, type);
     }
 
-    pobj_internal_events[pobj_internal_events_last_event++].eventfd = eventfd;
+    pobj_internal_events[pobj_internal_events_last_event].eventfd = eventfd;
     pobj_internal_events[pobj_internal_events_last_event++].type = type;
 
     loop->ref_count++;
@@ -132,6 +132,7 @@ bool pobj_unregister_event(pobj_loop *loop, const pint32 eventfd)
         plog_error("epoll_ctl DEL error: %d %s", errno, strerror(errno));
     }
 
+    --pobj_internal_events_last_event;
 
     loop->ref_count--;
     return true;
