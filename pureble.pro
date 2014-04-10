@@ -38,6 +38,13 @@ QMAKE_LFLAGS += -Wl,--as-needed
 VPATH += ./third_party/tommyds
 INCLUDEPATH += ./third_party/tommyds
 
+# nanomsg
+VPATH += ./third_party/nanomsg/include/nanomsg
+VPATH += ./third_party/nanomsg/src
+INCLUDEPATH += ./third_party/nanomsg/include
+QMAKE_LIBDIR += ./third_party/nanomsg/lib
+LIBS += -lnanomsg
+
 
 SOURCES += \
     src/plog/log.c \
@@ -48,7 +55,8 @@ SOURCES += \
     src/papp/runner.c \
     src/pobj/object.c \
     src/pobj/timer.c \
-    src/pobj/signals.c
+    src/pobj/signals.c \
+    src/pnet/network.c
 
 HEADERS += \
     include/plog/log.h \
@@ -62,5 +70,16 @@ HEADERS += \
     include/papp/runner.h \
     include/pobj/object.h \
     include/pobj/timer.h \
-    include/pobj/signals.h
+    include/pobj/signals.h \
+    include/pnet/network.h \
+    third_party/nanomsg/include/nanomsg/tcp.h \
+    third_party/nanomsg/include/nanomsg/survey.h \
+    third_party/nanomsg/include/nanomsg/reqrep.h \
+    third_party/nanomsg/include/nanomsg/pubsub.h \
+    third_party/nanomsg/include/nanomsg/pipeline.h \
+    third_party/nanomsg/include/nanomsg/pair.h \
+    third_party/nanomsg/include/nanomsg/nn.h \
+    third_party/nanomsg/include/nanomsg/ipc.h \
+    third_party/nanomsg/include/nanomsg/inproc.h \
+    third_party/nanomsg/include/nanomsg/bus.h
 

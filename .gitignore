@@ -1,8 +1,9 @@
 *Makefile*
 *.o
-*.pro.user
+*.pro.user*
 *.a
 /test/args/args
 /test/args/argsd
 *callgrind.out.*
 /build
+/third_party/nanomsg

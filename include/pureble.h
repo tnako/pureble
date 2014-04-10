@@ -14,5 +14,7 @@
 #include "pobj/timer.h"
 #include "pobj/signals.h"
 
+#include "pnet/network.h"
+
 
 #endif

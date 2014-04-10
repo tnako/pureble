@@ -91,19 +91,19 @@ bool pobj_signals_start(pobj_loop* loop)
     }
 
     if (unlikely(sigprocmask(SIG_BLOCK, &sigmask, NULL) < 0)) {
-        plog_error("Неудалось заблокировать POSIX сигнал: '%s'", strerror(errno));
+        plog_error("Не удалось заблокировать POSIX сигнал: '%s'", strerror(errno));
         return false;
     }
 
     int signal_fd;
     if (unlikely((signal_fd = signalfd(-1, &sigmask, SFD_NONBLOCK)) < 0)) {
-        plog_error("Неудалось настроить POSIX сигнал: '%s'", strerror(errno));
+        plog_error("Не удалось настроить POSIX сигнал: '%s'", strerror(errno));
         return false;
     }
 
 
     if (unlikely(!pobj_register_event(loop, pobj_signals_internal_update, signal_fd, POBJIN))) {
-        plog_error("pobj_signals_start() неудалось зарегистрировать событие");
+        plog_error("pobj_signals_start() не удалось зарегистрировать событие");
         return false;
     }
 
