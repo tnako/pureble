@@ -9,6 +9,7 @@
 
 #define POBJIN EPOLLIN
 #define POBJOUT EPOLLOUT
+#define POBJET EPOLLET
 
 
 typedef struct {

@@ -7,3 +7,7 @@
 *callgrind.out.*
 /build
 /third_party/nanomsg
+/third_party/build
+/third_party/czmq
+/third_party/libsodium
+/third_party/zeromq

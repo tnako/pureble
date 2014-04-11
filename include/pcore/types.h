@@ -4,6 +4,16 @@
 #include <stdbool.h>
 
 
+#define _GNU_SOURCE
+
+#ifdef __GNUC__
+#  define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
+#else
+#  define UNUSED(x) UNUSED_ ## x
+#endif
+
+
+
 typedef unsigned char puint8;
 typedef unsigned short puint16;
 typedef unsigned long puint32;

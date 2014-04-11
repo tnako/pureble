@@ -38,13 +38,11 @@ QMAKE_LFLAGS += -Wl,--as-needed
 VPATH += ./third_party/tommyds
 INCLUDEPATH += ./third_party/tommyds
 
-# nanomsg
-VPATH += ./third_party/nanomsg/include/nanomsg
-VPATH += ./third_party/nanomsg/src
-INCLUDEPATH += ./third_party/nanomsg/include
-QMAKE_LIBDIR += ./third_party/nanomsg/lib
+VPATH += ./third_party/build/include
+INCLUDEPATH += ./third_party/build/include
+QMAKE_LIBDIR += ./third_party/build/lib
 
-QMAKE_POST_LINK = cp third_party/nanomsg/lib/libnanomsg.a bin/
+QMAKE_POST_LINK = cp third_party/build/lib/*.a bin/
 
 SOURCES += \
     src/plog/log.c \

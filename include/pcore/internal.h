@@ -7,20 +7,12 @@
 #include "plog/log.h"
 
 
-#define _GNU_SOURCE
-
 #ifdef __LP64__
 #define MEM_GUARD 64
 #define _FILE_OFFSET_BITS 64
 #else
 #define MEM_GUARD 32
 #define _FILE_OFFSET_BITS 32
-#endif
-
-#ifdef __GNUC__
-#  define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
-#else
-#  define UNUSED(x) UNUSED_ ## x
 #endif
 
 #define pmalloc(a) pmalloc_check(__PRETTY_FUNCTION__, a)

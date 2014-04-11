@@ -9,206 +9,227 @@
 #include "pnet/network.h"
 #include "pcore/internal.h"
 
-#include <nanomsg/nn.h>
-#include <nanomsg/reqrep.h>
-#include <nanomsg/tcp.h>
+#include <czmq.h>
 
 
-bool pnet_internal_create_socket(pnet_socket *socket, pint16 type)
+#define MDPE_CLIENT         "PC01"
+#define MDPE_BROKER         "PB01"
+#define MDPE_WORKER         "PW01"
+
+
+
+struct broker_t {
+    zctx_t *ctx;                //  Our context
+    void *socket;               //  Socket for clients & workers
+    int socket_fd;               //  Socket for clients & workers
+    zhash_t *services;          //  Hash of known services
+    zhash_t *workers;           //  Hash of known workers
+    zlist_t *waiting;           //  List of waiting workers
+};
+
+typedef struct {
+    char *name;                 //  Service name
+    zlist_t *requests;          //  List of client requests
+    zlist_t *waiting;           //  List of waiting workers
+    size_t workers;             //  How many workers we have
+} service_t;
+
+
+
+bool pnet_broker_start(pnet_broker **broker_p, const char *address)
 {
-    if (unlikely(!socket)) {
-        plog_error("pnet_internal_create_socket() нет объекта socket");
+    if (unlikely(*broker_p)) {
+        plog_error("pnet_broker_start() объект pnet_broker уже существует");
         return false;
     }
 
-    int sock = nn_socket(AF_SP_RAW, type);
-    if (unlikely(sock < 0)) {
-        plog_error("pnet_internal_create_socket() не удалось создать сокет | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    socket->socket_fd = sock;
-
-    int val = 1;
-    if (unlikely(nn_setsockopt(socket->socket_fd, NN_TCP, NN_TCP_NODELAY, &val, sizeof(val)))) {
-        plog_error("pnet_internal_create_socket() не удалось выставить NN_TCP_NODELAY | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    val = 0;
-    if (unlikely(nn_setsockopt(socket->socket_fd, NN_SOL_SOCKET, NN_LINGER, &val, sizeof(val)))) {
-        plog_error("pnet_internal_create_socket() не удалось выставить NN_LINGER | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    val = 10000;
-    if (unlikely(nn_setsockopt(socket->socket_fd, NN_SOL_SOCKET, NN_RECONNECT_IVL_MAX, &val, sizeof(val)))) {
-        plog_error("pnet_internal_create_socket() не удалось выставить NN_RECONNECT_IVL_MAX | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    return true;
-}
-
-bool pnet_internal_get_socketfd(pnet_socket *socket)
-{
-    size_t sd_size = sizeof(int);
-
-    if (unlikely(nn_getsockopt(socket->socket_fd, NN_SOL_SOCKET, NN_RCVFD, &socket->recv_fd, &sd_size))) {
-        plog_error("pnet_server_start() не удалось получить NN_RCVFD | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    if (unlikely(nn_getsockopt(socket->socket_fd, NN_SOL_SOCKET, NN_SNDFD, &socket->send_fd, &sd_size))) {
-        plog_error("pnet_server_start() не удалось получить NN_SNDFD | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    return true;
-}
-
-
-bool pnet_server_start(pnet_socket *socket, const char *address)
-{
     if (unlikely(!address)) {
-        plog_error("pnet_server_start() нет строки адреса");
+        plog_error("pnet_broker_start() нет объекта address");
         return false;
     }
 
-    if (unlikely(!pnet_internal_create_socket(socket, NN_REP))) {
+    pnet_broker *broker;
+    broker = pmalloc(sizeof(struct broker_t));
+    broker->ctx = zctx_new();
+
+    if (unlikely(!broker->ctx)) {
+        plog_error("pnet_broker_start() не удалось создать контекст");
+        pfree(&broker);
         return false;
     }
 
-    socket->endpoint_id = nn_bind(socket->socket_fd, address);
-    if (unlikely(socket->endpoint_id < 0)) {
-        plog_error("pnet_server_start() не удалось bind() | %s (%d)", nn_strerror(nn_errno()), nn_errno());
+    broker->socket = zsocket_new(broker->ctx, ZMQ_ROUTER);
+
+    if (unlikely(!broker->socket)) {
+        plog_error("pnet_broker_start() не удалось создать socket");
+        zctx_destroy(&broker->ctx);
+        pfree(&broker);
         return false;
     }
 
-    if (unlikely(!pnet_internal_get_socketfd(socket))) {
+    broker->services = zhash_new();
+    broker->workers = zhash_new();
+    broker->waiting = zlist_new();
+
+    pint32 port = zsocket_bind(broker->socket, address);
+
+    if (unlikely(port < 1)) {
+        plog_error("pnet_broker_start() не удалось bind на порт %d | %d | %s", port, zmq_errno(), zmq_strerror(zmq_errno()));
+        zctx_destroy(&broker->ctx);
+        pfree(&broker);
         return false;
     }
 
-    socket->started = true;
+    size_t sfd_size = sizeof(broker->socket_fd);
+    if (unlikely(zmq_getsockopt(broker->socket, ZMQ_FD, &broker->socket_fd, &sfd_size) < 0)) {
+        plog_error("pnet_broker_start() не удалось zmq_getsockopt");
+        zctx_destroy(&broker->ctx);
+        pfree(&broker);
+        return false;
+    }
+
+    *broker_p = broker;
 
     return true;
 }
 
-
-void pnet_socket_destroy(pnet_socket *socket)
+bool pnet_broker_stop(pnet_broker **broker_p)
 {
-    if (unlikely(!socket)) {
-        plog_error("pnet_socket_destroy() нет объекта socket");
+    pnet_broker *broker = *broker_p;
+
+    if (unlikely(!broker)) {
+        plog_error("pnet_broker_stop() нету объекта pnet_broker");
+        return false;
+    }
+
+    zctx_destroy(&broker->ctx);
+    zhash_destroy(&broker->services);
+    zhash_destroy(&broker->workers);
+    zlist_destroy(&broker->waiting);
+    pfree(broker_p);
+
+    return true;
+}
+
+bool pnet_broker_register(pnet_broker *broker, pobj_loop *loop, void (*callback)())
+{
+    if (unlikely(!broker)) {
+        plog_error("pnet_broker_register() нету объекта pnet_broker");
+        return false;
+    }
+
+    if (unlikely(!loop)) {
+        plog_error("pnet_broker_register() нету объекта pobj_loop");
+        return false;
+    }
+
+    if (unlikely(!callback)) {
+        plog_error("pnet_broker_register() нету объекта callback");
+        return false;
+    }
+
+    if (unlikely(!pobj_register_event(loop, callback, broker->socket_fd, POBJIN | POBJET))) {
+        plog_error("pnet_broker_register() не удалось зарегистрировать событие");
+        return false;
+    }
+
+    return true;
+}
+
+pint32 pnet_broker_check_event(const pnet_broker *broker)
+{
+    if (unlikely(!broker)) {
+        plog_error("pnet_broker_register() нету объекта pnet_broker");
+        return -1;
+    }
+
+    pint32 zmq_events = 0;
+    size_t opt_len = sizeof(zmq_events);
+
+    if (unlikely(zmq_getsockopt(broker->socket, ZMQ_EVENTS, &zmq_events, &opt_len) < 0)) {
+        plog_error("get zmq events failed, err: %s", zmq_strerror(errno));
+        return -1;
+    }
+
+    pint32 ret = 0;
+
+    if (zmq_events & ZMQ_POLLIN) {
+        ret |= POBJIN;
+    }
+    if (zmq_events & ZMQ_POLLOUT) {
+        ret |= POBJOUT;
+    }
+
+    return ret;
+}
+
+static void pnet_broker_internal_client_read(const pnet_broker *broker, zframe_t *sender, zmsg_t *msg)
+{
+    if (unlikely(zmsg_size(msg) < 2)) {
+        plog_warn("pnet_broker_internal_client_read() zmsg_size = ", zmsg_size(msg));
+        zmsg_destroy(&msg);
         return;
     }
 
-    if (unlikely(!socket->socket_fd)) {
+    zframe_t *service_frame = zmsg_pop(msg);
+
+    zmsg_wrap(msg, zframe_dup(sender));
+
+    char *name = (char *)zframe_data(service_frame);
+    service_t *service = (service_t *)zhash_lookup(broker->services, name);
+
+    char *return_code;
+    if (unlikely(service == NULL)) {
+        return_code = "404"; // Not Found
+    } else if (likely(service->workers)) {
+        return_code = "200"; // OK // ToDo: send to worker
+    } else {
+        return_code = "503"; // Service Unavailable
+    }
+
+    zframe_reset(zmsg_last(msg), return_code, strlen(return_code));
+
+    zframe_t *client = zmsg_unwrap(msg);
+    zmsg_push(msg, zframe_dup(service_frame));
+    zmsg_pushstr(msg, MDPE_CLIENT);
+    zmsg_wrap(msg, client);
+    zmsg_send(&msg, broker->socket);
+
+    zframe_destroy(&service_frame);
+}
+
+void pnet_broker_readmsg(const pnet_broker *broker)
+{
+    if (unlikely(!broker)) {
+        plog_error("pnet_broker_readmsg() нету объекта pnet_broker");
         return;
     }
 
-    nn_shutdown(socket->socket_fd, 0);
-    nn_close(socket->socket_fd);
-    socket->socket_fd = 0;
-    socket->endpoint_id = 0;
-    socket->started = false;
+    zmsg_t *msg = zmsg_recv(broker->socket);
+
+    if (unlikely(!msg)) {
+        return;
+    }
+
+    plog_dbg("Got msg:");
+    zmsg_dump(msg);
+
+    zframe_t *sender = zmsg_pop(msg);
+    zframe_t *empty  = zmsg_pop(msg);
+    zframe_t *header = zmsg_pop(msg);
+
+    if (zframe_streq(header, MDPE_CLIENT)) {
+        pnet_broker_internal_client_read(broker, sender, msg);
+    } else if (zframe_streq(header, MDPE_WORKER)) {
+        //worker_callback(sender, msg);
+        // ToDo: worker
+    } else {
+        plog_warn("Invalid message:");
+        zmsg_dump(msg);
+        zmsg_destroy(&msg);
+    }
+
+    zframe_destroy(&sender);
+    zframe_destroy(&empty);
+    zframe_destroy(&header);
 }
-
-
-pint32 pnet_recv(pnet_socket *socket, char **buffer)
-{
-    if (unlikely(!socket)) {
-        plog_error("pnet_recv() нет объекта socket");
-        return -1;
-    }
-
-    if (unlikely(!buffer)) {
-        plog_error("pnet_recv() buffer неверен");
-        return -1;
-    }
-
-    int bytes = nn_recv(socket->socket_fd, buffer, NN_MSG, NN_DONTWAIT);
-    //int bytes = nn_recvmsg(socket->socket_fd, (struct nn_msghdr *)buffer, NN_DONTWAIT);
-    /*
-    struct nn_msghdr hdr;
-    struct nn_iovec iov [2];
-    char buf0 [10] = { 0 };
-    char buf1 [6] = { 0 };
-    iov [0].iov_base = buf0;
-    iov [0].iov_len = sizeof (buf0);
-    iov [1].iov_base = buf1;
-    iov [1].iov_len = sizeof (buf1);
-    memset (&hdr, 0, sizeof (hdr));
-    hdr.msg_iov = iov;
-    hdr.msg_iovlen = 2;
-    int bytes = nn_recvmsg(socket->socket_fd, &hdr, NN_DONTWAIT);
-
-    printf("%d | %s | %s\n", bytes, buf0, buf1);
-    *buffer = strdup(buf0);
-*/
-    return bytes;
-}
-
-puint32 rra = 1684*623*452;
-
-pint32 pnet_send(pnet_socket *socket, char *buffer)
-{
-    if (unlikely(!socket)) {
-        plog_error("pnet_send() нет объекта socket");
-        return -1;
-    }
-
-    if (unlikely(!buffer)) {
-        plog_error("pnet_send() нет buffer");
-        return -1;
-    }
-
-    //int bytes = nn_send(socket->socket_fd, buffer, strlen(buffer), NN_DONTWAIT);
-    struct nn_msghdr hdr;
-    struct nn_iovec iov [2];
-    puint32 buf0 = ++rra | 0x80000000;
-
-    char buf1 [10] = { 0 };
-    strcpy(buf1, buffer);
-    iov [0].iov_base = &buf0;
-    iov [0].iov_len = 4;
-    iov [1].iov_base = buf1;
-    iov [1].iov_len = sizeof (buf1);
-    memset (&hdr, 0, sizeof (hdr));
-    hdr.msg_iov = iov;
-    hdr.msg_iovlen = 2;
-    int bytes = nn_sendmsg (socket->socket_fd, &hdr, NN_DONTWAIT);
-
-
-    plog_dbg("pnet_send() send %d", bytes);
-    //int rc = nn_freemsg(buffer);
-     // plog_dbg("rc == %d", rc);
-
-    return bytes;
-}
-
-bool pnet_client_start(pnet_socket *socket, const char *address)
-{
-    if (unlikely(!address)) {
-        plog_error("pnet_server_start() нет строки адреса");
-        return false;
-    }
-
-    if (unlikely(!pnet_internal_create_socket(socket, NN_REQ))) {
-        return false;
-    }
-
-    socket->endpoint_id = nn_connect(socket->socket_fd, address);
-    if (unlikely(socket->endpoint_id < 0)) {
-        plog_error("pnet_server_start() не удалось bind() | %s (%d)", nn_strerror(nn_errno()), nn_errno());
-        return false;
-    }
-
-    if (unlikely(!pnet_internal_get_socketfd(socket))) {
-        return false;
-    }
-
-    socket->started = true;
-
-    return true;
-}
-
