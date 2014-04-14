@@ -11,6 +11,8 @@
 #include <time.h>
 
 
+#include "plog/log.h"
+
 #define DATETIME_FORMAT "%Y-%m-%d %H:%M:%S"
 #define DATETIME_SIZE 20 // sizeof("2013-03-21 11:41:59")
 
@@ -24,6 +26,10 @@ struct tm timeinfo;
     
 void pcore_log(int type, const char *module, const char *format, ... )
 {
+//    if (type == PUR_MSG_DBG) {
+//        return;
+//    }
+
     if (!module) {
         fprintf(stderr, "%s(): Нет имени модуля!", __PRETTY_FUNCTION__);
         return;

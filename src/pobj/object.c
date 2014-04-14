@@ -105,7 +105,7 @@ bool pobj_register_event(pobj_loop *loop, const pobj_event_emit callback, const 
         plog_error("epoll_ctl ADD error: %d %s", errno, strerror(errno));
         return false;
     } else {
-        plog_dbg("Цикл %x | Событие %d зарегистрировано на функцию %x с типом %d", loop, eventfd, callback, type);
+        plog_dbg("Цикл %x | Событие %d зарегистрировано на функцию %x с типом %x", loop, eventfd, callback, type);
     }
 
     pobj_internal_events[pobj_internal_events_last_event].eventfd = eventfd;
