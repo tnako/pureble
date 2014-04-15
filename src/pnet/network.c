@@ -18,13 +18,12 @@
 
 
 //  MDP/Server commands, as strings
-#define MDPW_READY          0x0001
-#define MDPW_REQUEST        0x0010
-#define MDPW_REPLY          0x0050
-#define MDPW_HEARTBEAT      0x0100
-#define MDPW_DISCONNECT     0x1000
+#define MDPW_HELLO          "PW_HI"
+#define MDPW_REQUEST        "PW_REQ"
+#define MDPW_REPLY          "PW_REP"
+#define MDPW_HEARTBEAT      "PW_HB"
 
-#define HEARTBEAT_EXPIRY    6000 * 5 // 5 Minute, for test 0.5 min
+#define HEARTBEAT_EXPIRY    60000 * 5 // 5 Minute, for test 0.5 min
 
 
 struct broker_t {
@@ -186,12 +185,65 @@ static void pnet_broker_internal_client_return_msg(const pnet_broker *broker, zm
     zmsg_pushstr(msg, MDPE_CLIENT);
     zmsg_wrap(msg, client);
 
-    plog_dbg("Send msg:");
+    plog_dbg("Send msg to client:");
     zmsg_dump(msg);
 
     int ret = zmsg_send(&msg, broker->socket);
     if (ret < 0) {
         printf("send %d | %d | %s\n", ret, zmq_errno(), zmq_strerror(zmq_errno()));
+    }
+}
+
+static void pnet_broker_internal_worker_delete(const pnet_broker *broker, worker_t *worker)
+{
+    if (worker->service) {
+        zlist_remove (worker->service->waiting, worker);
+        worker->service->workers--;
+    }
+
+    zlist_remove(broker->waiting, worker);
+    zhash_delete(broker->workers, worker->id_string);
+}
+
+void pnet_broker_purge_workers(const pnet_broker *broker)
+{
+    worker_t *worker = (worker_t *) zlist_first(broker->waiting);
+    pint64 cur_time = zclock_time();
+    while (worker) {
+        if (cur_time <= worker->expiry) {
+            break;
+        }
+
+        plog_dbg("Удаляем мёртвого работника: %s", worker->id_string);
+
+        pnet_broker_internal_worker_delete(broker, worker);
+        worker = (worker_t *) zlist_first(broker->waiting);
+    }
+}
+
+static void pnet_broker_internal_worker_send(const pnet_broker *broker, worker_t *worker, char *command, zmsg_t *msg)
+{
+    zmsg_pushstr(msg, command);
+    zmsg_pushstr(msg, MDPE_WORKER);
+
+    zmsg_wrap(msg, zframe_dup(worker->identity));
+
+    plog_dbg("Send to worker:");
+    zmsg_dump(msg);
+    zmsg_send(&msg, broker->socket);
+}
+
+static void pnet_broker_internal_service_dispatch(const pnet_broker *broker, service_t *service, zmsg_t *msg)
+{
+    if (msg) {
+        zlist_append(service->requests, msg);
+    }
+
+    while (zlist_size(service->waiting) && zlist_size(service->requests)) {
+        worker_t *worker = zlist_pop(service->waiting);
+        zlist_remove(broker->waiting, worker);
+        zmsg_t *msg = zlist_pop(service->requests);
+        pnet_broker_internal_worker_send(broker, worker, MDPW_REQUEST, msg);
     }
 }
 
@@ -207,13 +259,13 @@ static void pnet_broker_internal_client_read(const pnet_broker *broker, zframe_t
 
     zmsg_wrap(msg, zframe_dup(sender));
 
-    char *name = (char *)zframe_data(service_frame);
+    char *name = zframe_strdup(service_frame);
     service_t *service = (service_t *)zhash_lookup(broker->services, name);
 
     if (unlikely(service == NULL)) {
         pnet_broker_internal_client_return_msg(broker, msg, service_frame, "404"); // Not Found
     } else if (likely(service->workers)) {
-        pnet_broker_internal_client_return_msg(broker, msg, service_frame, "200"); // OK // ToDo: send to worker
+        pnet_broker_internal_service_dispatch(broker, service, msg);
     } else {
         pnet_broker_internal_client_return_msg(broker, msg, service_frame, "503"); // Service Unavailable
     }
@@ -225,13 +277,36 @@ static void pnet_broker_internal_worker_destroy(void *argument)
 {
     worker_t *self = (worker_t *) argument;
     zframe_destroy(&self->identity);
-    free(self->id_string);
-    free(self);
+    pfree(&self->id_string);
+    pfree(&self);
+}
+
+static void pnet_broker_internal_service_destroy(void *argument)
+{
+    service_t *service = (service_t *) argument;
+
+    while (zlist_size(service->requests)) {
+        zmsg_t *msg = zlist_pop(service->requests);
+        zmsg_destroy(&msg);
+    }
+
+    zlist_destroy(&service->requests);
+    zlist_destroy(&service->waiting);
+    pfree(&service->name);
+    pfree(&service);
+}
+
+static void pnet_broker_internal_worker_waiting(const pnet_broker *broker, worker_t *worker)
+{
+    zlist_append(broker->waiting, worker);
+    zlist_append(worker->service->waiting, worker);
+    worker->expiry = zclock_time() + HEARTBEAT_EXPIRY;
+    pnet_broker_internal_service_dispatch(broker, worker->service, NULL);
 }
 
 static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t *sender, zmsg_t *msg)
 {
-    if (unlikely(zmsg_size(msg) < 2)) {
+    if (unlikely(zmsg_size(msg) < 1)) {
         plog_warn("pnet_broker_internal_worker_read() zmsg_size = %d", zmsg_size(msg));
         zmsg_destroy(&msg);
         return;
@@ -248,62 +323,68 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
     if (worker == NULL) {
         worker = (worker_t *) pmalloc(sizeof(worker_t));
         worker->id_string = id_string;
-        worker->identity = zframe_dup(identity);
+        worker->identity = zframe_dup(sender);
         zhash_insert(broker->workers, id_string, worker);
         zhash_freefn(broker->workers, id_string, pnet_broker_internal_worker_destroy);
-        plog_dbg("Новый сервис зарегистрирован: %s", (char *)zframe_data(worker->identity));
+        plog_dbg("Новый рабочий зарегистрирован: %x", zframe_data(worker->identity));
     } else {
-        free (id_string);
+        pfree(&id_string);
+    }
+
+
+    if (worker_ready) {
+        worker->expiry = zclock_time () + HEARTBEAT_EXPIRY;
+    } else {
+        // Attach worker to service and mark as idle
+        zframe_t *service_frame = zmsg_pop(msg);
+        char *name = zframe_strdup(service_frame);
+
+        worker->service = (service_t *) pmalloc(sizeof(service_t));
+        worker->service->name = name;
+        worker->service->requests = zlist_new();
+        worker->service->waiting = zlist_new();
+        zhash_insert(broker->services, name, worker->service);
+        zhash_freefn(broker->services, name, pnet_broker_internal_service_destroy);
+        plog_dbg("Новый сервис зарегистрирован: %s", name);
+
+        worker->service->workers++;
+        pnet_broker_internal_worker_waiting(broker, worker);
+        zframe_destroy(&service_frame);
     }
 
 
 
+    if (zframe_streq(command, MDPW_HELLO)) {
 
+        plog_dbg("Получен MDPW_HELLO от %s", worker->id_string);
+        zmsg_destroy(&msg);
 
-
-    if (zframe_streq(command, MDPW_READY)) {
-        if (worker_ready) {
-            worker->expiry = zclock_time () + HEARTBEAT_EXPIRY;
-        } else {
-            // Attach worker to service and mark as idle
-            zframe_t *service_frame = zmsg_pop(msg);
-            worker->service = s_service_require(self, service_frame);
-            worker->service->workers++;
-            s_worker_waiting(worker);
-            zframe_destroy(&service_frame);
-        }
     } else if (zframe_streq(command, MDPW_REPLY)) {
-        if (worker_ready) {
-            //  Remove and save client return envelope and insert the
-            //  protocol header and service name, then rewrap envelope.
-            zframe_t *client = zmsg_unwrap(msg);
-            zmsg_pushstr(msg, worker->service->name);
-            zmsg_pushstr(msg, MDPC_CLIENT);
-            zmsg_wrap(msg, client);
-            zmsg_send(&msg, self->socket);
-            s_worker_waiting(worker);
-        } else {
-            // Просто обрыв связи между воркером и брокером
-            // синоним сердцебиения
-            s_worker_delete(worker, 1);
-        }
-    } else if (zframe_streq(command, MDPW_HEARTBEAT)) {
-        if (worker_ready) {
-            worker->expiry = zclock_time () + HEARTBEAT_EXPIRY;
-        } else {
-            // Просто обрыв связи между воркером и брокером
-            // синоним сердцебиения
-            s_worker_delete(worker, 1);
-        }
-    } else if (zframe_streq (command, MDPW_DISCONNECT)) {
-        s_worker_delete(worker, 0);
-    } else {
-        zclock_log ("E: invalid input message");
-        zmsg_dump (msg);
-    }
-    free (command);
-    zmsg_destroy (&msg);
 
+        plog_dbg("Получен MDPW_REPLY от %s", worker->id_string);
+        zframe_t *client = zmsg_unwrap(msg);
+        zmsg_pushstr(msg, worker->service->name);
+        zmsg_pushstr(msg, MDPE_CLIENT);
+        zmsg_wrap(msg, client);
+        zmsg_send(&msg, broker->socket);
+        pnet_broker_internal_worker_waiting(broker, worker);
+
+    } else if (zframe_streq(command, MDPW_HEARTBEAT)) {
+
+        plog_dbg("Получен MDPW_HEARTBEAT от %s", worker->id_string);
+        zmsg_pushstr(msg, MDPW_HEARTBEAT);
+        zmsg_pushstr(msg, MDPE_WORKER);
+        zmsg_wrap(msg, zframe_dup(sender));
+        zmsg_send(&msg, broker->socket);
+
+    } else {
+
+        plog_warn("Неверный тип действия %x", (char *)zframe_data(command));
+        zmsg_dump(msg);
+        zmsg_destroy(&msg);
+    }
+
+    pfree(&command);
 }
 
 bool pnet_broker_readmsg(const pnet_broker *broker)
@@ -327,15 +408,14 @@ bool pnet_broker_readmsg(const pnet_broker *broker)
     zframe_t *header = zmsg_pop(msg);
 
     if (zframe_streq(header, MDPE_CLIENT)) {
-        plog_dbg("Client msg");
+        plog_dbg("Получено сообщение от клиента");
         pnet_broker_internal_client_read(broker, sender, msg);
     } else if (zframe_streq(header, MDPE_WORKER)) {
-        plog_dbg("Worker msg");
+        plog_dbg("Получено сообщение от работника");
         pnet_broker_internal_worker_read(broker, sender, msg);
-        //worker_callback(sender, msg);
-        // ToDo: worker
+
     } else {
-        plog_warn("Invalid message: %x | %s", zframe_data(sender), (char *)zframe_data(header));
+        plog_warn("Неверное сообщение: %x | %s", zframe_data(sender), (char *)zframe_data(header));
         zmsg_dump(msg);
         zmsg_destroy(&msg);
     }
