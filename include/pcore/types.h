@@ -4,7 +4,9 @@
 #include <stdbool.h>
 
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #ifdef __GNUC__
 #  define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))

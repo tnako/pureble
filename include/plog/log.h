@@ -14,7 +14,7 @@ enum msg_item_type
 void pcore_log(int, const char *, const char *, ...);
  
 #ifndef MODULE_NAME
-#define MODULE_NAME 'unknown'
+#define MODULE_NAME "unknown"
 #endif
 
 #define plog_info( ... ) pcore_log( PUR_MSG_INFO, MODULE_NAME, __VA_ARGS__ )
