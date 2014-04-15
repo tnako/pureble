@@ -52,8 +52,8 @@ static void pobj_signals_internal_update(pobj_loop* loop, const puint32 epoll_ev
                 return;
             }
 
-            if (!loop->signals_callback) {
-                plog_error("pobj_signals_internal_update() нету массива сигналов");
+            if (!loop->signals_callback || fdsi.ssi_signo >= _NSIG) {
+                plog_error("pobj_signals_internal_update() неверный номер сигнала");
                 return;
             }
 
