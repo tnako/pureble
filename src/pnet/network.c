@@ -23,7 +23,7 @@
 #define MDPW_REPLY          "PW_REP"
 #define MDPW_HEARTBEAT      "PW_HB"
 
-#define HEARTBEAT_EXPIRY    60000 * 5 // 5 Minute
+#define HEARTBEAT_EXPIRY    1000 * 20 // 20 Seconds
 
 
 struct client_t {
@@ -234,8 +234,6 @@ static void pnet_broker_internal_worker_send(const pnet_broker *broker, worker_t
 
     zmsg_wrap(msg, zframe_dup(worker->identity));
 
-    plog_dbg("Send to worker:");
-    zmsg_dump(msg);
     zmsg_send(&msg, broker->socket);
 }
 
@@ -345,13 +343,19 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
         zframe_t *service_frame = zmsg_pop(msg);
         char *name = zframe_strdup(service_frame);
 
-        worker->service = (service_t *) pmalloc(sizeof(service_t));
-        worker->service->name = name;
-        worker->service->requests = zlist_new();
-        worker->service->waiting = zlist_new();
-        zhash_insert(broker->services, name, worker->service);
-        zhash_freefn(broker->services, name, pnet_broker_internal_service_destroy);
-        plog_dbg("Новый сервис зарегистрирован: %s", name);
+        service_t *service = (service_t *)zhash_lookup(broker->services, name);
+        if (service == NULL) {
+            worker->service = (service_t *) pmalloc(sizeof(service_t));
+            worker->service->name = name;
+            worker->service->requests = zlist_new();
+            worker->service->waiting = zlist_new();
+            zhash_insert(broker->services, name, worker->service);
+            zhash_freefn(broker->services, name, pnet_broker_internal_service_destroy);
+            plog_dbg("Новый сервис зарегистрирован: %s", name);
+        } else {
+            worker->service = service;
+            pfree(&name);
+        }
 
         worker->service->workers++;
         pnet_broker_internal_worker_waiting(broker, worker);
@@ -405,9 +409,6 @@ bool pnet_broker_readmsg(const pnet_broker *broker)
     if (!msg) {
         return false;
     }
-
-    plog_dbg("Got msg:");
-    zmsg_dump(msg);
 
     zframe_t *sender = zmsg_pop(msg);
     zframe_t *empty  = zmsg_pop(msg);
@@ -562,9 +563,6 @@ bool pnet_client_message_read(const pnet_client *client, pnet_message **mes)
         if (!new_msg) {
             return false;
         }
-
-        plog_dbg("Client fot msg:");
-        zmsg_dump(new_msg);
 
         zframe_t *empty  = zmsg_pop(new_msg);
         zframe_destroy(&empty);
