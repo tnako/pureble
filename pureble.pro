@@ -42,7 +42,8 @@ VPATH += ./third_party/build/include
 INCLUDEPATH += ./third_party/build/include
 QMAKE_LIBDIR += ./third_party/build/lib
 
-QMAKE_POST_LINK = cp third_party/build/lib/*.a bin/
+QMAKE_POST_LINK += cp -a third_party/build/lib/*.a bin/;
+QMAKE_POST_LINK += cp -a third_party/build/lib/mariadb/libmariadbclient.a bin/;
 
 SOURCES += \
     src/plog/log.c \
@@ -54,7 +55,8 @@ SOURCES += \
     src/pobj/object.c \
     src/pobj/timer.c \
     src/pobj/signals.c \
-    src/pnet/network.c
+    src/pnet/network.c \
+    src/psql/mariadb.c
 
 HEADERS += \
     include/plog/log.h \
@@ -79,5 +81,6 @@ HEADERS += \
     third_party/nanomsg/include/nanomsg/nn.h \
     third_party/nanomsg/include/nanomsg/ipc.h \
     third_party/nanomsg/include/nanomsg/inproc.h \
-    third_party/nanomsg/include/nanomsg/bus.h
+    third_party/nanomsg/include/nanomsg/bus.h \
+    include/psql/mariadb.h
 

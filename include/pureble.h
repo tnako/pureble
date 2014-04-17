@@ -13,6 +13,7 @@
 #include "pobj/object.h"
 #include "pobj/timer.h"
 #include "pobj/signals.h"
+#include "psql/mariadb.h"
 
 #include "pnet/network.h"
 

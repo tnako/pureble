@@ -9,6 +9,7 @@ cd third_party
 MYPWD=${PWD}/build
 
 export CFLAGS=-I${MYPWD}/include
+export CPPFLAGS=-I${MYPWD}/include
 export LDFLAGS=-L${MYPWD}/lib
 
 function get_from_git()
@@ -65,16 +66,24 @@ function compile()
 echo "------------------ GIT ------------------";
 
 if [ -z ${1} ] ; then #OffLine mode
-	get_from_git zeromq
 	get_from_git libsodium
+	get_from_git zeromq
 	get_from_git czmq
 fi
 
 echo "------------------ Compile ------------------";
 
-compile zeromq
 compile libsodium
+compile zeromq
 compile czmq
 
-cd ..
+echo "------------------ Mariadb Client ------------------";
+
+mkdir build/mariadb_cmake
+cd build/mariadb_cmake
+cmake -DCMAKE_INSTALL_PREFIX=${MYPWD} ../../mariadb-native-client/
+make -j5
+make install
+
+cd ../../..
 
