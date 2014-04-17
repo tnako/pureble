@@ -1,5 +1,5 @@
-#ifndef OBJ_POLLER_H_
-#define OBJ_POLLER_H_
+#ifndef SQL_MARIADB_H_
+#define SQL_MARIADB_H_
 
 #include "pcore/types.h"
 
