@@ -55,7 +55,7 @@ void pobj_run(pobj_loop *loop)
         }
 
         loop->num_epoll_events = epoll_wait(loop->epoll_fd, loop->epoll_events, loop->max_epoll_events, -1);
-        plog_dbg("epoll_wait() кол-во событий: %d", loop->num_epoll_events);
+        //plog_dbg("epoll_wait() кол-во событий: %d", loop->num_epoll_events);
 
         if (unlikely(loop->num_epoll_events <= 0)) {
             if (errno != EINTR) {
@@ -104,8 +104,6 @@ bool pobj_register_event(pobj_loop *loop, const pobj_event_emit callback, const 
     if (unlikely(epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, eventfd, &ev)==-1)) {
         plog_error("epoll_ctl ADD error: %d %s", errno, strerror(errno));
         return false;
-    } else {
-        plog_dbg("Цикл %x | Событие %d зарегистрировано на функцию %x с типом %x", loop, eventfd, callback, type);
     }
 
     pobj_internal_events[pobj_internal_events_last_event].eventfd = eventfd;

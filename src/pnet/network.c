@@ -23,19 +23,18 @@
 #define MDPW_REPLY          "PW_REP"
 #define MDPW_HEARTBEAT      "PW_HB"
 
-#define HEARTBEAT_EXPIRY    1000 * 20 // 20 Seconds
-
 
 struct client_t {
     zctx_t *ctx;                //  Our context
     void *socket;               //  Socket for clients & workers
-    int socket_fd;               //  Socket for clients & workers
+    int socket_fd;              //  Socket for clients & workers
+    puint8 heartbeat;           //  Heartbeat count
 };
 
 struct broker_t {
     zctx_t *ctx;                //  Our context
     void *socket;               //  Socket for clients & workers
-    int socket_fd;               //  Socket for clients & workers
+    int socket_fd;              //  Socket for clients & workers
     zhash_t *services;          //  Hash of known services
     zhash_t *workers;           //  Hash of known workers
     zlist_t *waiting;           //  List of waiting workers
@@ -156,6 +155,56 @@ bool pnet_broker_register(pnet_broker *broker, pobj_loop *loop, void (*callback)
     return true;
 }
 
+bool pnet_client_register(pnet_client *client, pobj_loop *loop, void (*callback)())
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_client_register() нету объекта pnet_client");
+        return false;
+    }
+
+    if (unlikely(!loop)) {
+        plog_error("pnet_client_register() нету объекта pobj_loop");
+        return false;
+    }
+
+    if (unlikely(!callback)) {
+        plog_error("pnet_client_register() нету объекта callback");
+        return false;
+    }
+
+    if (unlikely(!pobj_register_event(loop, callback, client->socket_fd, POBJIN | POBJET))) {
+        plog_error("pnet_client_register() не удалось зарегистрировать событие");
+        return false;
+    }
+
+    return true;
+}
+
+bool pnet_worker_register(pnet_client *worker, pobj_loop *loop, void (*callback)())
+{
+    if (unlikely(!worker)) {
+        plog_error("pnet_worker_register() нету объекта pnet_client");
+        return false;
+    }
+
+    if (unlikely(!loop)) {
+        plog_error("pnet_worker_register() нету объекта pobj_loop");
+        return false;
+    }
+
+    if (unlikely(!callback)) {
+        plog_error("pnet_worker_register() нету объекта callback");
+        return false;
+    }
+
+    if (unlikely(!pobj_register_event(loop, callback, worker->socket_fd, POBJIN | POBJET))) {
+        plog_error("pnet_worker_register() не удалось зарегистрировать событие");
+        return false;
+    }
+
+    return true;
+}
+
 pint32 pnet_broker_check_event(const pnet_broker *broker)
 {
     if (unlikely(!broker)) {
@@ -203,7 +252,7 @@ static void pnet_broker_internal_client_return_msg(const pnet_broker *broker, zm
 static void pnet_broker_internal_worker_delete(const pnet_broker *broker, worker_t *worker)
 {
     if (worker->service) {
-        zlist_remove (worker->service->waiting, worker);
+        zlist_remove(worker->service->waiting, worker);
         worker->service->workers--;
     }
 
@@ -216,14 +265,15 @@ void pnet_broker_purge_workers(const pnet_broker *broker)
     worker_t *worker = (worker_t *) zlist_first(broker->waiting);
     pint64 cur_time = zclock_time();
     while (worker) {
-        if (cur_time <= worker->expiry) {
-            break;
+        worker_t *cur_worker = worker;
+        worker = (worker_t *) zlist_next(broker->waiting);
+
+        if (cur_time <= cur_worker->expiry) {
+            continue;
         }
 
-        plog_dbg("Удаляем мёртвого работника: %s", worker->id_string);
-
-        pnet_broker_internal_worker_delete(broker, worker);
-        worker = (worker_t *) zlist_first(broker->waiting);
+        plog_dbg("Удаляем мёртвого работника: %s", cur_worker->id_string);
+        pnet_broker_internal_worker_delete(broker, cur_worker);
     }
 }
 
@@ -304,7 +354,7 @@ static void pnet_broker_internal_worker_waiting(const pnet_broker *broker, worke
 {
     zlist_append(broker->waiting, worker);
     zlist_append(worker->service->waiting, worker);
-    worker->expiry = zclock_time() + HEARTBEAT_EXPIRY;
+    worker->expiry = zclock_time() + HEARTBEAT_EXPIRY * HEARTBEAT_MISS;
     pnet_broker_internal_service_dispatch(broker, worker->service, NULL);
 }
 
@@ -330,17 +380,25 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
         worker->identity = zframe_dup(sender);
         zhash_insert(broker->workers, id_string, worker);
         zhash_freefn(broker->workers, id_string, pnet_broker_internal_worker_destroy);
-        plog_dbg("Новый рабочий зарегистрирован: %x", zframe_data(worker->identity));
+        plog_info("Новый рабочий зарегистрирован: %s", worker->id_string);
     } else {
         pfree(&id_string);
     }
 
 
     if (worker_ready) {
-        worker->expiry = zclock_time () + HEARTBEAT_EXPIRY;
+        worker->expiry = zclock_time() + HEARTBEAT_EXPIRY * HEARTBEAT_MISS;
     } else {
-        // Attach worker to service and mark as idle
         zframe_t *service_frame = zmsg_pop(msg);
+
+        if (unlikely(!service_frame)) {
+            plog_error("Нету сервиса в сообщении!");
+            zframe_destroy(&service_frame);
+            pnet_broker_internal_worker_delete(broker, worker);
+            pfree(&command);
+            return;
+        }
+
         char *name = zframe_strdup(service_frame);
 
         service_t *service = (service_t *)zhash_lookup(broker->services, name);
@@ -415,10 +473,10 @@ bool pnet_broker_readmsg(const pnet_broker *broker)
     zframe_t *header = zmsg_pop(msg);
 
     if (zframe_streq(header, MDPE_CLIENT)) {
-        plog_dbg("Получено сообщение от клиента");
+        //plog_dbg("Получено сообщение от клиента");
         pnet_broker_internal_client_read(broker, sender, msg);
     } else if (zframe_streq(header, MDPE_WORKER)) {
-        plog_dbg("Получено сообщение от работника");
+        //plog_dbg("Получено сообщение от работника");
         pnet_broker_internal_worker_read(broker, sender, msg);
 
     } else {
@@ -434,7 +492,7 @@ bool pnet_broker_readmsg(const pnet_broker *broker)
     return true;
 }
 
-bool pnet_client_connect(pnet_client **client_p, const char *address)
+bool pnet_client_start(pnet_client **client_p, const char *address)
 {
     if (unlikely(*client_p)) {
         plog_error("pnet_client_connect() объект pnet_client уже существует");
@@ -480,7 +538,24 @@ bool pnet_client_connect(pnet_client **client_p, const char *address)
         return false;
     }
 
+    client->heartbeat = 0;
+
     *client_p = client;
+
+    return true;
+}
+
+bool pnet_client_stop(pnet_client **client_p)
+{
+    pnet_client *client = *client_p;
+
+    if (unlikely(!client)) {
+        plog_error("pnet_client_stop() нету объекта pnet_client");
+        return false;
+    }
+
+    zctx_destroy(&client->ctx);
+    pfree(client_p);
 
     return true;
 }
@@ -512,6 +587,12 @@ void pnet_message_add(pnet_message *mes, const char *string)
     zmsg_addstr(mes, string);
 }
 
+void pnet_internal_message_add_header(pnet_message *mes, const char *service, const char *type)
+{
+    zmsg_pushstr(mes, service);
+    zmsg_pushstr(mes, type);
+    zmsg_pushstr(mes, "");
+}
 
 void pnet_client_message_send(const pnet_client *client, pnet_message *mes, const char *service)
 {
@@ -530,30 +611,17 @@ void pnet_client_message_send(const pnet_client *client, pnet_message *mes, cons
         return;
     }
 
-    zmsg_pushstr(mes, service);
-    zmsg_pushstr(mes, MDPE_CLIENT);
-    zmsg_pushstr(mes, "");
-    zmsg_send (&mes, client->socket);
+    pnet_internal_message_add_header(mes, service, MDPE_CLIENT);
+    zmsg_send(&mes, client->socket);
 }
 
-
-bool pnet_client_message_read(const pnet_client *client, pnet_message **mes)
+bool pnet_internal_message_read(const pnet_client *client, pnet_message **mes, const char *type)
 {
-    if (unlikely(!client)) {
-        plog_error("pnet_client_message_read() нету объекта pnet_client");
-        return false;
-    }
-
-    if (unlikely(*mes)) {
-        plog_error("pnet_client_message_read() объект pnet_message существует");
-        return false;
-    }
-
     pint32 zmq_events = 0;
     size_t opt_len = sizeof(zmq_events);
 
     if (unlikely(zmq_getsockopt(client->socket, ZMQ_EVENTS, &zmq_events, &opt_len) < 0)) {
-        plog_error("pnet_client_message_read() get zmq events failed, err: %s", zmq_strerror(errno));
+        plog_error("pnet_internal_message_read() get zmq events failed, err: %s", zmq_strerror(errno));
         return false;
     }
 
@@ -569,7 +637,7 @@ bool pnet_client_message_read(const pnet_client *client, pnet_message **mes)
 
         zframe_t *header = zmsg_pop(new_msg);
 
-        if (unlikely(!zframe_streq(header, MDPE_CLIENT))) {
+        if (unlikely(!zframe_streq(header, type))) {
             zframe_destroy(&header);
             return false;
         }
@@ -581,6 +649,21 @@ bool pnet_client_message_read(const pnet_client *client, pnet_message **mes)
     }
 
     return false;
+}
+
+bool pnet_client_message_read(const pnet_client *client, pnet_message **mes)
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_client_message_read() нету объекта pnet_client");
+        return false;
+    }
+
+    if (unlikely(*mes)) {
+        plog_error("pnet_client_message_read() объект pnet_message существует");
+        return false;
+    }
+
+    return pnet_internal_message_read(client, mes, MDPE_CLIENT);
 }
 
 
@@ -595,7 +678,159 @@ char *pnet_message_get(pnet_message **mes)
 
     if (!line) {
         zmsg_destroy(mes);
+        *mes = NULL;
     }
 
     return line;
+}
+
+
+void pnet_worker_message_send(const pnet_client *client, pnet_message *mes, const char *service)
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_worker_message_send() нету объекта pnet_client");
+        return;
+    }
+
+    if (unlikely(!mes)) {
+        plog_error("pnet_worker_message_send() нету объекта pnet_message");
+        return;
+    }
+
+    if (unlikely(!service)) {
+        plog_error("pnet_worker_message_send() нету имени службы");
+        return;
+    }
+
+    pnet_internal_message_add_header(mes, service, MDPE_WORKER);
+    zmsg_send(&mes, client->socket);
+}
+
+bool pnet_worker_message_read(pnet_client *client, pnet_message **mes)
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_worker_message_read() нету объекта pnet_client");
+        return false;
+    }
+
+    if (unlikely(*mes)) {
+        plog_error("pnet_worker_message_read() объект pnet_message существует");
+        return false;
+    }
+
+    if (!pnet_internal_message_read(client, mes, MDPE_WORKER)) {
+        return false;
+    }
+
+    zframe_t *command  = zmsg_pop(*mes);
+    if (unlikely(!command)) {
+        plog_warn("pnet_worker_message_read() Нету команды");
+        zmsg_destroy(mes);
+        return true;
+    }
+
+    if (zframe_streq(command, MDPW_REQUEST)) {
+        plog_dbg("pnet_worker_message_read() Пришёл запрос MDPW_REQUEST");
+        zframe_destroy(&command);
+        return true;
+    } else if (zframe_streq(command, MDPW_HEARTBEAT)) {
+        client->heartbeat = 0;
+    } else {
+        plog_warn("pnet_worker_message_read() Неизвестная команда");
+    }
+
+    zframe_destroy(&command);
+    zmsg_destroy(mes);
+
+    return true;
+}
+
+
+void pnet_worker_send_hello(const pnet_client *client, const char *service)
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_worker_send_hello() нету объекта pnet_client");
+        return;
+    }
+
+    if (unlikely(!service)) {
+        plog_error("pnet_worker_send_hello() нету сервиса");
+        return;
+    }
+
+
+    pnet_message *mes = zmsg_new();
+    zmsg_addstr(mes, service);
+
+    pnet_worker_message_send(client, mes, MDPW_HELLO);
+    plog_dbg("pnet_worker_send_hello() Отправка регистрации на дворецкого");
+}
+
+
+bool pnet_worker_send_heartbeat(pnet_client *client)
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_worker_send_heartbeat() нету объекта pnet_client");
+        return false;
+    }
+
+    if (client->heartbeat > HEARTBEAT_MISS) {
+        return false;
+    }
+
+    ++client->heartbeat;
+
+    pnet_message *mes = zmsg_new();
+    pnet_worker_message_send(client, mes, MDPW_HEARTBEAT);
+
+    return true;
+}
+
+
+pnet_message *pnet_worker_reply_init(pnet_message *request)
+{
+    if (unlikely(!request)) {
+        plog_error("pnet_worker_reply_init() нету объекта pnet_message");
+        return NULL;
+    }
+
+    zframe_t *reply_to = zmsg_unwrap(request);
+    if (unlikely(!reply_to)) {
+        plog_error("pnet_worker_reply_init() нету адресата");
+        zmsg_destroy(&request);
+        return NULL;
+    }
+
+    pnet_message *mes = zmsg_new();
+    zmsg_wrap(mes, reply_to);
+
+    return mes;
+}
+
+
+void pnet_worker_reply_send(const pnet_client *client, pnet_message *reply)
+{
+    if (unlikely(!client)) {
+        plog_error("pnet_worker_reply_send() нету объекта pnet_client");
+        return;
+    }
+
+    if (unlikely(!reply)) {
+        plog_error("pnet_worker_reply_send() нету объекта pnet_message");
+        return;
+    }
+
+    pnet_worker_message_send(client, reply, MDPW_REPLY);
+}
+
+
+void pnet_message_destroy(pnet_message **mes)
+{
+    if (unlikely(!(*mes))) {
+        plog_error("pnet_message_destroy() нету объекта pnet_message");
+        return;
+    }
+
+    zmsg_destroy(mes);
+    *mes = NULL;
 }
