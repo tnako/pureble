@@ -8,147 +8,135 @@
 #include "plog/log.h"
 #include "pcore/internal.h"
 
-#include <mariadb/mysql.h>
 
 
-
-
-
-#define SL(s) (s), sizeof(s)
-
-static const char *my_groups[]= { "client", NULL };
-
-static int wait_for_mysql(MYSQL *mysql, int status)
+MYSQL *psql_mariadb_start(const char *address, const char *user, const char *password, const char *database)
 {
-  struct pollfd pfd;
-  int timeout;
-  int res;
-
-  pfd.fd = mysql_get_socket(mysql);
-  pfd.events =
-    (status & MYSQL_WAIT_READ ? POLLIN : 0) |
-    (status & MYSQL_WAIT_WRITE ? POLLOUT : 0) |
-    (status & MYSQL_WAIT_EXCEPT ? POLLPRI : 0);
-  if (status & MYSQL_WAIT_TIMEOUT) {
-    timeout= 1000*mysql_get_timeout_value(mysql);
-  } else {
-    timeout= -1;
-  }
-  res = poll(&pfd, 1, timeout);
-  if (res == 0) {
-    return MYSQL_WAIT_TIMEOUT;
-  } else if (res < 0) {
-    /*
-      In a real event framework, we should handle EINTR and re-try the poll.
-    */
-    return MYSQL_WAIT_TIMEOUT;
-  } else {
-    int status= 0;
-    if (pfd.revents & POLLIN)
-      status|= MYSQL_WAIT_READ;
-    if (pfd.revents & POLLOUT)
-      status|= MYSQL_WAIT_WRITE;
-    if (pfd.revents & POLLPRI)
-      status|= MYSQL_WAIT_EXCEPT;
-    return status;
-  }
-
-}
-
-static void fatal(MYSQL *mysql, const char *msg)
-{
-  fprintf(stderr, "%s: %s\n", msg, mysql_error(mysql));
-  exit(1);
-}
-
-static void doit(const char *host, const char *user, const char *password)
-{
-  int err;
-  MYSQL mysql, *ret;
-  MYSQL_RES *res;
-  MYSQL_ROW row;
-  int status;
-
-  mysql.reconnect = true;
-  mysql_init(&mysql);
-  mysql_options(&mysql, MYSQL_OPT_NONBLOCK, 0);
-
-  /* Returns 0 when done, else flag for what to wait for when need to block. */
-  status = mysql_real_connect_start(&ret, &mysql, host, user, password, NULL, 0, NULL, 0);
-
-  while (status) {
-    status = wait_for_mysql(&mysql, status);
-    status = mysql_real_connect_cont(&ret, &mysql, status);
-  }
-
-  if (!ret) {
-    fatal(&mysql, "Failed to mysql_real_connect()");
-  }
-
-  status = mysql_real_query_start(&err, &mysql, SL("SHOW STATUS"));
-  while (status) {
-    status = wait_for_mysql(&mysql, status);
-    status = mysql_real_query_cont(&err, &mysql, status);
-  }
-  if (err) {
-    fatal(&mysql, "mysql_real_query() returns error");
-  }
-
-  /* This method cannot block. */
-  res = mysql_use_result(&mysql);
-  if (!res) {
-    fatal(&mysql, "mysql_use_result() returns error");
-  }
-
-  for (;;) {
-    status= mysql_fetch_row_start(&row, res);
-    while (status)
-    {
-      status = wait_for_mysql(&mysql, status);
-      status = mysql_fetch_row_cont(&row, res, status);
+    if (unlikely(!address || !user || !password || !database)) {
+        plog_error("psql_mariadb_start() Нет данных для подключени");
+        return NULL;
     }
-    if (!row) {
-      break;
-    }
-    printf("%s: %s\n", row[0], row[1]);
-  }
-  if (mysql_errno(&mysql)) {
-    fatal(&mysql, "Got error while retrieving rows");
-  }
-  mysql_free_result(res);
 
-  /*
-    mysql_close() sends a COM_QUIT packet, and so in principle could block
-    waiting for the socket to accept the data.
-    In practise, for many applications it will probably be fine to use the
-    blocking mysql_close().
-   */
-  status = mysql_close_start(&mysql);
-  while (status) {
-    status = wait_for_mysql(&mysql, status);
-    status = mysql_close_cont(&mysql, status);
-  }
+    int err = mysql_library_init(-1, NULL, NULL);
+    if (unlikely(err)) {
+        plog_error("psql_mariadb_start() mysql_library_init() вернул код ошибки: %d", err);
+        return NULL;
+    }
+
+    MYSQL *mariadb;
+
+    mariadb = mysql_init(NULL);
+    mariadb->reconnect = true;
+
+    if (unlikely(mysql_real_connect(mariadb, address, user, password, database, 0, NULL, 0) == NULL)) {
+        plog_error("psql_mariadb_start() невозможно подключиться к БД | %s", mysql_error(mariadb));
+        mysql_library_end();
+        return NULL;
+    }
+
+    if (unlikely(mysql_autocommit(mariadb, 0))) {
+        plog_error("psql_mariadb_start() невозможно отключить mysql_autocommit");
+        mysql_close(mariadb);
+        mysql_library_end();
+        return NULL;
+    }
+
+    return mariadb;
 }
 
-int main(int argc, char *argv[])
+
+
+void psql_mariadb_stop(MYSQL **connection)
 {
-  int err;
+    if (unlikely(!(*connection))) {
+        plog_error("psql_mariadb_stop() Нету MYSQL");
+        return;
+    }
 
-  if (argc != 4)
-  {
-    fprintf(stderr, "Usage: %s <host> <user> <password>\n", argv[0]);
-    exit(1);
-  }
+    mysql_close(*connection);
+    mysql_library_end();
+    *connection = NULL;
+}
 
-  err = mysql_library_init(argc, argv, (char **)my_groups);
-  if (err) {
-    fprintf(stderr, "Fatal: mysql_library_init() returns error: %d\n", err);
-    exit(1);
-  }
 
-  doit(argv[1], argv[2], argv[3]);
+MYSQL_STMT *psql_mariadb_stm_init(MYSQL *connection, MYSQL_BIND *params, MYSQL_BIND *results, const char *query)
+{
+    if (unlikely(!connection)) {
+        plog_error("psql_mariadb_stm_init() Нету MYSQL connection");
+        return NULL;
+    }
 
-  mysql_library_end();
+    if (unlikely(!params)) {
+        plog_error("psql_mariadb_stm_init() Нету MYSQL_BIND params");
+        return NULL;
+    }
 
-  return 0;
+    if (unlikely(!results)) {
+        plog_error("psql_mariadb_stm_init() Нету MYSQL_BIND results");
+        return NULL;
+    }
+
+    if (unlikely(!query)) {
+        plog_error("psql_mariadb_stm_init() Нету query");
+        return NULL;
+    }
+
+    MYSQL_STMT *stmt;
+
+    stmt = mysql_stmt_init(connection);
+    if (!stmt) {
+        plog_error("psql_mariadb_stm_init() не могу mysql_stmt_init");
+        return NULL;
+    }
+
+    if (mysql_stmt_prepare(stmt, query, strlen(query))) {
+        plog_error("psql_mariadb_stm_init() Не могу mysql_stmt_prepare: %s", mysql_stmt_error(stmt));
+        mysql_stmt_close(stmt);
+        return NULL;
+    }
+
+    if (mysql_stmt_bind_param(stmt, params)) {
+        plog_error("psql_mariadb_stm_init() Не могу mysql_stmt_bind_param: %s", mysql_stmt_error(stmt));
+        mysql_stmt_close(stmt);
+        return NULL;
+    }
+
+    if (mysql_stmt_bind_result(stmt, results) != 0) {
+        plog_error("psql_mariadb_stm_init() Не могу mysql_stmt_bind_result: %s", mysql_stmt_error(stmt));
+        mysql_stmt_close(stmt);
+        return NULL;
+    }
+
+    return stmt;
+}
+
+bool psql_mariadb_stm_execute(MYSQL_STMT *stmt)
+{
+    if (unlikely(!stmt)) {
+        plog_error("psql_mariadb_stm_execute() Нету MYSQL_STMT");
+        return false;
+    }
+
+    if (unlikely(mysql_stmt_execute(stmt))) {
+        plog_error("psql_mariadb_stm_execute() Не могу mysql_stmt_execute: %s", mysql_stmt_error(stmt));
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    return true;
+}
+
+bool psql_mariadb_stm_fetch(MYSQL_STMT *stmt)
+{
+    if (unlikely(!stmt)) {
+        plog_error("psql_mariadb_stm_fetch() Нету MYSQL_STMT");
+        return false;
+    }
+
+    if(mysql_stmt_fetch(stmt) == 0) {
+        return true;
+    }
+
+    mysql_stmt_free_result(stmt);
+    return false;
 }

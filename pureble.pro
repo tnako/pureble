@@ -42,6 +42,8 @@ VPATH += ./third_party/build/include
 INCLUDEPATH += ./third_party/build/include
 QMAKE_LIBDIR += ./third_party/build/lib
 
+INCLUDEPATH += ./third_party/build/include/mariadb
+
 QMAKE_POST_LINK += cp -a third_party/build/lib/*.a bin/;
 QMAKE_POST_LINK += cp -a third_party/build/lib/mariadb/libmariadbclient.a bin/;
 

@@ -37,7 +37,8 @@ int pnet_client_getfd(const pnet_client *client);
 
 
 pnet_message* pnet_message_new();
-void pnet_message_add(pnet_message *mes, const char *string);
+void pnet_message_addmem(pnet_message *mes, const void *src, size_t size);
+void pnet_message_addstr(pnet_message *mes, const char *string);
 char *pnet_message_get(pnet_message **mes);
 void pnet_message_destroy(pnet_message **mes);
 
@@ -53,5 +54,7 @@ bool pnet_worker_send_heartbeat(pnet_client *client);
 
 pnet_message *pnet_worker_reply_init(pnet_message *request);
 void pnet_worker_reply_send(const pnet_client *client, pnet_message *reply);
+
+
 
 #endif

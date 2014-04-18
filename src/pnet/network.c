@@ -434,6 +434,7 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
         zmsg_pushstr(msg, worker->service->name);
         zmsg_pushstr(msg, MDPE_CLIENT);
         zmsg_wrap(msg, client);
+        zmsg_dump(msg);
         zmsg_send(&msg, broker->socket);
         pnet_broker_internal_worker_waiting(broker, worker);
 
@@ -577,10 +578,25 @@ pnet_message *pnet_message_new()
 }
 
 
-void pnet_message_add(pnet_message *mes, const char *string)
+void pnet_message_addmem(pnet_message *mes, const void *src, size_t size)
 {
     if (unlikely(!mes)) {
-        plog_error("pnet_message_add() нету объекта pnet_message");
+        plog_error("pnet_message_addmem() нету объекта pnet_message");
+        return;
+    }
+
+    if (unlikely(!src || size == 0)) {
+        plog_error("pnet_message_addmem() нету области памяти");
+        return;
+    }
+
+    zmsg_addmem(mes, src, size);
+}
+
+void pnet_message_addstr(pnet_message *mes, const char *string)
+{
+    if (unlikely(!mes)) {
+        plog_error("pnet_message_addstr() нету объекта pnet_message");
         return;
     }
 
@@ -730,7 +746,6 @@ bool pnet_worker_message_read(pnet_client *client, pnet_message **mes)
     }
 
     if (zframe_streq(command, MDPW_REQUEST)) {
-        plog_dbg("pnet_worker_message_read() Пришёл запрос MDPW_REQUEST");
         zframe_destroy(&command);
         return true;
     } else if (zframe_streq(command, MDPW_HEARTBEAT)) {
