@@ -4,6 +4,8 @@
 *.a
 /test/args/args
 /test/args/argsd
+/test/majordomo/bin
+/test/majordomo/build
 *callgrind.out.*
 /build
 /third_party/nanomsg
