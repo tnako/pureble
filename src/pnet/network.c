@@ -411,6 +411,7 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
 
         plog_dbg("Получен MDPW_HELLO от %s", worker->id_string);
         zmsg_destroy(&msg);
+        pnet_broker_internal_service_dispatch(broker, worker->service, NULL);
 
     } else if (zframe_streq(command, MDPW_REPLY)) {
 
