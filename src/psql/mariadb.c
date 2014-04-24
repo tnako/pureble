@@ -101,10 +101,12 @@ MYSQL_STMT *psql_mariadb_stm_init(MYSQL *connection, MYSQL_BIND *params, MYSQL_B
         return NULL;
     }
 
-    if (mysql_stmt_bind_result(stmt, results) != 0) {
-        plog_error("psql_mariadb_stm_init() Не могу mysql_stmt_bind_result: %s", mysql_stmt_error(stmt));
-        mysql_stmt_close(stmt);
-        return NULL;
+    if ((*results).buffer_type != 0) {
+        if (mysql_stmt_bind_result(stmt, results) != 0) {
+            plog_error("psql_mariadb_stm_init() Не могу mysql_stmt_bind_result: %s", mysql_stmt_error(stmt));
+            mysql_stmt_close(stmt);
+            return NULL;
+        }
     }
 
     return stmt;

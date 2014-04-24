@@ -39,7 +39,7 @@ void broker_main_loop()
 
 
 
-    pnet_broker_start(&broker, "tcp://127.0.0.1:12345");
+    pnet_broker_start(&broker, "tcp://127.0.0.1:8050");
     pnet_broker_register(broker, looper, func_net_event);
 
 
