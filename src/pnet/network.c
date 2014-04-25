@@ -462,21 +462,29 @@ bool pnet_broker_readmsg(const pnet_broker *broker)
             return false;
         }
 
+        zmsg_dump(msg);
+
         zframe_t *sender = zmsg_pop(msg);
         zframe_t *empty  = zmsg_pop(msg);
         zframe_t *header = zmsg_pop(msg);
 
-        if (zframe_streq(header, MDPE_CLIENT)) {
-            //plog_dbg("Получено сообщение от клиента");
-            pnet_broker_internal_client_read(broker, sender, msg);
-        } else if (zframe_streq(header, MDPE_WORKER)) {
-            //plog_dbg("Получено сообщение от работника");
-            pnet_broker_internal_worker_read(broker, sender, msg);
-
-        } else {
-            plog_warn("Неверное сообщение: %x | %s", zframe_data(sender), (char *)zframe_data(header));
+        if (!sender || !empty || !header) {
+            plog_warn("Нету заголовка сообщения: %p | %p | %p", sender, empty, header);
             zmsg_dump(msg);
             zmsg_destroy(&msg);
+        } else {
+            if (zframe_streq(header, MDPE_CLIENT)) {
+                //plog_dbg("Получено сообщение от клиента");
+                pnet_broker_internal_client_read(broker, sender, msg);
+            } else if (zframe_streq(header, MDPE_WORKER)) {
+                //plog_dbg("Получено сообщение от работника");
+                pnet_broker_internal_worker_read(broker, sender, msg);
+
+            } else {
+                plog_warn("Неверное сообщение: %x | %x", zframe_data(sender), zframe_data(header));
+                zmsg_dump(msg);
+                zmsg_destroy(&msg);
+            }
         }
 
         zframe_destroy(&sender);
