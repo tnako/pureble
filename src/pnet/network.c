@@ -394,7 +394,7 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
             worker->service->waiting = zlist_new();
             zhash_insert(broker->services, name, worker->service);
             zhash_freefn(broker->services, name, pnet_broker_internal_service_destroy);
-            plog_dbg("Новый сервис зарегистрирован: %s", name);
+            plog_info("Новый сервис зарегистрирован: %s", name);
         } else {
             worker->service = service;
             pfree(&name);
@@ -409,7 +409,6 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
 
     if (zframe_streq(command, MDPW_HELLO)) {
 
-        plog_dbg("Получен MDPW_HELLO от %s", worker->id_string);
         zmsg_destroy(&msg);
         pnet_broker_internal_service_dispatch(broker, worker->service, NULL);
 
@@ -426,7 +425,6 @@ static void pnet_broker_internal_worker_read(const pnet_broker *broker, zframe_t
 
     } else if (zframe_streq(command, MDPW_HEARTBEAT)) {
 
-        plog_dbg("Получен MDPW_HEARTBEAT от %s", worker->id_string);
         zmsg_pushstr(msg, MDPW_HEARTBEAT);
         zmsg_pushstr(msg, MDPE_WORKER);
         zmsg_wrap(msg, zframe_dup(sender));

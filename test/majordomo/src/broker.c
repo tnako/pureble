@@ -18,11 +18,11 @@ static void func_net_event()
     }
 }
 
-static void timer_check_workers()
-{
-    //pnet_broker_purge_workers(broker);
-    plog_dbg("timer");
-}
+//static void timer_check_workers()
+//{
+//    //pnet_broker_purge_workers(broker);
+//    //plog_dbg("timer");
+//}
 
 void broker_main_loop()
 {
@@ -43,8 +43,8 @@ void broker_main_loop()
     pnet_broker_register(broker, looper, func_net_event);
 
 
-    struct timespec time = { .tv_sec = 60, .tv_nsec = 0 };
-    pobj_internal_timer_start(looper, 1, time, timer_check_workers);
+//    struct timespec time = { .tv_sec = 60, .tv_nsec = 0 };
+//    pobj_internal_timer_start(looper, 1, time, timer_check_workers);
 
 
 
